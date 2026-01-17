@@ -291,6 +291,16 @@ Python library setup (do this once in your script/session)
       DEFAULT_ZONE = "example.com"
       DEFAULT_PTR_ZONE = "10.in-addr.arpa"
 
+14) Dump a forward zone
+    Example CLI output:
+      {"type":"A","name":"@","value":"10.0.0.10"}
+      {"type":"CNAME","name":"www","value":"web-01.example.com"}
+      {"type":"A","name":"*.dev","value":"10.0.0.20"}
+
+    CLI:
+      python3 tdnsctl.py --zone example.com
+    Python:
+      client.get_records(fqdn=z, zone=z, list_zone=True)
 
 """
 
@@ -837,6 +847,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     pcsv.add_argument("--ptr-zone", help="Default PTR zone if CSV ptr_zone column empty (overrides config default_ptr_zone)")
     pcsv.add_argument("--dry-run", action="store_true", help="Log actions but do not call API")
 
+    # dump-zone
+    pdump = sub.add_parser("dump-zone", help="Dump a DNS Zone's records.")
+    pdump.add_argument("--zone", help="Forward zone to dump records (A, AAAA, CNAME)")
+
     args = p.parse_args(argv)
     cfg_path = Path(args.config_path or default_config_path())
 
@@ -903,6 +917,61 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             changed, total = apply_csv(client, args.csv, default_zone=dz, default_ptr_zone=dpz)
             log(logger, logging.INFO, "csv_summary", total=total, changed_rows=changed, dry_run=bool(args.dry_run))
+            return 0
+
+        if args.cmd == "dump-zone":
+            z = pick_zone(getattr(args, "zone", None), cfg_default_zone)
+            if not z:
+                raise ValueError("Missing --zone and no default_zone configured.")
+
+            # Fetch all records in the zone (includes wildcards); then filter to enabled A/AAAA/CNAME.
+            records = client.get_records(fqdn=z, zone=z, list_zone=True)
+
+            def rel_name(fqdn: str, zone: str) -> str:
+                fqdn = fqdn.rstrip(".")
+                zone = zone.rstrip(".")
+                if fqdn == zone:
+                    return "@"
+                suffix = "." + zone
+                if fqdn.endswith(suffix):
+                    return fqdn[: -len(suffix)]
+                # Shouldn't happen for listZone=true on the zone, but keep it safe.
+                return fqdn
+
+            out = []
+            for rr in records:
+                if rr.get("disabled"):
+                    continue
+
+                rtype = (rr.get("type") or "").upper()
+                if rtype not in ("A", "AAAA", "CNAME"):
+                    continue
+
+                name_fqdn = (rr.get("name") or "").strip()
+                rdata = rr.get("rData") or {}
+
+                if rtype in ("A", "AAAA"):
+                    value = rdata.get("ipAddress")
+                else:  # CNAME
+                    value = rdata.get("cname")
+
+                if not name_fqdn or not value:
+                    continue
+
+                out.append(
+                    {
+                        "type": rtype,
+                        "name": rel_name(name_fqdn, z),  # relative-to-zone; "@" for apex
+                        "value": value,
+                    }
+                )
+
+            # Stable ordering for deterministic diffs / easy shell use.
+            out.sort(key=lambda d: (d["name"], d["type"], d["value"]))
+
+            for row in out:
+                print(json.dumps(row, separators=(",", ":"), ensure_ascii=False))
+
             return 0
 
         raise SystemExit(f"Unhandled command: {args.cmd}")

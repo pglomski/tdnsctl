@@ -390,3 +390,24 @@ python3 tdnsctl.py config-write \
   --overwrite
 ```
 
+---
+
+## 14) Dump a forward zone
+
+Example CLI output:
+```
+{"type":"A","name":"@","value":"10.0.0.10"}
+{"type":"CNAME","name":"www","value":"web-01.example.com"}
+{"type":"A","name":"*.dev","value":"10.0.0.20"}
+```
+
+CLI:
+```bash
+python3 tdnsctl.py --zone example.com
+```
+
+Python:
+```python
+c.get_records(fqdn=z, zone=z, list_zone=True)
+```
+
