@@ -22,6 +22,8 @@ CLI precedence:
 - For zone / ptr-zone: CLI flag > config default > (error if missing where required)
 - For insecure: CLI --insecure (if set) > config insecure > default False
 
+Note: Specified zone will be used to build FQDN if short names are specified.
+
 # Everyday Usage Examples
 
 This document is intentionally **examples-first**.  

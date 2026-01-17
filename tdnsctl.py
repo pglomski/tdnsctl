@@ -22,6 +22,8 @@ CLI precedence:
 - For zone / ptr-zone: CLI flag > config default > (error if missing where required)
 - For insecure: CLI --insecure (if set) > config insecure > default False
 
+Note: Specified zone will be used to build FQDN if short names are specified.
+
 =====
 tdnsctl — quick-start / everyday use (examples-first)
 (Each CLI example is immediately followed by the equivalent Python library call.)
@@ -489,8 +491,37 @@ class TechnitiumClient:
         params: Dict[str, Any] = {"domain": fqdn, "listZone": "true" if list_zone else "false"}
         if zone:
             params["zone"] = zone
-        data = self._request("/api/zones/records/get", params)
+        try:
+            data = self._request("/api/zones/records/get", params)
+        except TechnitiumApiError:
+            return []
         return (data.get("response") or {}).get("records") or []
+#    def get_records(self, fqdn: str, zone: Optional[str] = None, list_zone: bool = False) -> List[Dict[str, Any]]:
+#        params: Dict[str, Any] = {"domain": fqdn, "listZone": "true" if list_zone else "false"}
+#        if zone:
+#            params["zone"] = zone
+# 
+#        try:
+#            data = self._request("/api/zones/records/get", params)
+#        except TechnitiumApiError as e:
+#            # Technitium may return status=error (HTTP 200) when the domain has no records / isn't in the zone.
+#            # For existence checks, that should be treated as "no records".
+#            msg = str(e).lower()
+#            not_found_markers = (
+#                "not found",
+#                "does not exist",
+#                "does not exists",
+#                "no such",
+#                "could not find",
+#                "requested value",
+#            )
+#            if any(m in msg for m in not_found_markers):
+#                log(self.logger, logging.DEBUG, "get_records_not_found", fqdn=fqdn, zone=zone, list_zone=list_zone, error=str(e))
+#                return []
+#            raise
+# 
+#        return (data.get("response") or {}).get("records") or []
+# 
 
     def add_record(
         self,
@@ -601,6 +632,7 @@ class TechnitiumClient:
     # Public idempotent ops
 
     def upsert_a(self, fqdn: str, zone: str, ip: str, ttl: Optional[int] = None, no_ptr: bool = False, ptr_zone: Optional[str] = None) -> Dict[str, Any]:
+        fqdn = fqdn if '.' in fqdn else fqdn + f".{zone}"
         a_changed = False
         if not self.record_exists(fqdn, zone, "A", ip):
             self.add_record(
@@ -619,6 +651,7 @@ class TechnitiumClient:
         return {"changed": (a_changed or ptr_result["changed"]), "details": {"a": {"changed": a_changed}, "ptr": ptr_result}}
 
     def upsert_aaaa(self, fqdn: str, zone: str, ip6: str, ttl: Optional[int] = None, no_ptr: bool = False, ptr_zone: Optional[str] = None) -> Dict[str, Any]:
+        fqdn = fqdn if '.' in fqdn else fqdn + f".{zone}"
         aaaa_changed = False
         if not self.record_exists(fqdn, zone, "AAAA", ip6):
             self.add_record(
@@ -637,12 +670,15 @@ class TechnitiumClient:
         return {"changed": (aaaa_changed or ptr_result["changed"]), "details": {"aaaa": {"changed": aaaa_changed}, "ptr": ptr_result}}
 
     def upsert_cname(self, fqdn: str, zone: str, target: str, ttl: Optional[int] = None) -> Dict[str, Any]:
+        fqdn = fqdn if '.' in fqdn else fqdn + f".{zone}"
+        target = target if '.' in target else target + f".{zone}"
         if self.record_exists(fqdn, zone, "CNAME", target):
             return {"changed": False, "details": {"cname": "present"}}
         self.add_record(fqdn, zone, "CNAME", ttl=ttl, cname=target)
         return {"changed": True, "details": {"cname": "created"}}
 
     def delete_a(self, fqdn: str, zone: str, ip: str, no_ptr: bool = False, ptr_zone: Optional[str] = None) -> Dict[str, Any]:
+        fqdn = fqdn if '.' in fqdn else fqdn + f".{zone}"
         a_deleted = False
         if self.record_exists(fqdn, zone, "A", ip):
             self.delete_record(fqdn, zone, "A", ip)
@@ -655,6 +691,7 @@ class TechnitiumClient:
         return {"changed": (a_deleted or ptr_res["changed"]), "details": {"a_deleted": a_deleted, "ptr": ptr_res}}
 
     def delete_aaaa(self, fqdn: str, zone: str, ip6: str, no_ptr: bool = False, ptr_zone: Optional[str] = None) -> Dict[str, Any]:
+        fqdn = fqdn if '.' in fqdn else fqdn + f".{zone}"
         aaaa_deleted = False
         if self.record_exists(fqdn, zone, "AAAA", ip6):
             self.delete_record(fqdn, zone, "AAAA", ip6)
@@ -667,6 +704,8 @@ class TechnitiumClient:
         return {"changed": (aaaa_deleted or ptr_res["changed"]), "details": {"aaaa_deleted": aaaa_deleted, "ptr": ptr_res}}
 
     def delete_cname(self, fqdn: str, zone: str, target: str) -> Dict[str, Any]:
+        fqdn = fqdn if '.' in fqdn else fqdn + f".{zone}"
+        target = target if '.' in target else target + f".{zone}"
         if not self.record_exists(fqdn, zone, "CNAME", target):
             return {"changed": False, "details": {"cname": "absent"}}
         self.delete_record(fqdn, zone, "CNAME", target)
@@ -892,20 +931,27 @@ def main(argv: Optional[List[str]] = None) -> int:
             ptr_zone = pick_zone(getattr(args, "ptr_zone", None), cfg_default_ptr_zone)
 
             rtype = args.type.upper()
+
+            # Default short names to FQDNs using the given zone
+            fqdn = args.name if '.' in args.name else args.name + f".{zone}"
+            if rtype == "CNAME":
+                target_fqdn = args.value if '.' in args.value else args.value + f".{zone}"
+                print(fqdn,target_fqdn)
+
             if args.cmd == "upsert":
                 if rtype == "A":
-                    res = client.upsert_a(args.name, zone, args.value, ttl=args.ttl, no_ptr=bool(args.no_ptr), ptr_zone=ptr_zone)
+                    res = client.upsert_a(fqdn, zone, args.value, ttl=args.ttl, no_ptr=bool(args.no_ptr), ptr_zone=ptr_zone)
                 elif rtype == "AAAA":
-                    res = client.upsert_aaaa(args.name, zone, args.value, ttl=args.ttl, no_ptr=bool(args.no_ptr), ptr_zone=ptr_zone)
+                    res = client.upsert_aaaa(fqdn, zone, args.value, ttl=args.ttl, no_ptr=bool(args.no_ptr), ptr_zone=ptr_zone)
                 else:
-                    res = client.upsert_cname(args.name, zone, args.value, ttl=args.ttl)
+                    res = client.upsert_cname(fqdn, zone, target_fqdn, ttl=args.ttl)
             else:
                 if rtype == "A":
-                    res = client.delete_a(args.name, zone, args.value, no_ptr=bool(args.no_ptr), ptr_zone=ptr_zone)
+                    res = client.delete_a(fqdn, zone, args.value, no_ptr=bool(args.no_ptr), ptr_zone=ptr_zone)
                 elif rtype == "AAAA":
-                    res = client.delete_aaaa(args.name, zone, args.value, no_ptr=bool(args.no_ptr), ptr_zone=ptr_zone)
+                    res = client.delete_aaaa(fqdn, zone, args.value, no_ptr=bool(args.no_ptr), ptr_zone=ptr_zone)
                 else:
-                    res = client.delete_cname(args.name, zone, args.value)
+                    res = client.delete_cname(fqdn, zone, target_fqdn)
 
             log(logger, logging.INFO, "result", changed=bool(res["changed"]), details=res["details"])
             return 0
