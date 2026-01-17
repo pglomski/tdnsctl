@@ -1,4 +1,28 @@
-# tdnsctl — Everyday Usage Guide (Examples First)
+# Technitium DNS CLI wrapper + importable python library
+
+Idempotent upsert/delete for A, AAAA, CNAME with optional PTR alignment.
+Default behavior: PTR presence aligns with A/AAAA presence.
+Override: --no-ptr (do not manage PTRs for that operation)
+
+Config supports defaults:
+```json
+  {
+    "base_url": "https://dns.example.com:5380",
+    "api_key": "YOURTOKEN",
+    "insecure": true,
+    "timeout_seconds": 15,
+    "log_level": "INFO",
+    "log_format": "json",
+    "default_zone": "example.com",
+    "default_ptr_zone": "10.in-addr.arpa"
+  }
+```
+
+CLI precedence:
+- For zone / ptr-zone: CLI flag > config default > (error if missing where required)
+- For insecure: CLI --insecure (if set) > config insecure > default False
+
+# Everyday Usage Examples
 
 This document is intentionally **examples-first**.  
 You should be able to copy/paste commands and start using the tool immediately without reading the full capability set.
@@ -7,7 +31,7 @@ For every CLI example, the **equivalent Python library call** is shown directly 
 
 ---
 
-## Python Library Setup (do this once)
+## Python Library Setup (once per python session)
 
 ```python
 from tdnsctl import TechnitiumClient
@@ -26,7 +50,7 @@ DEFAULT_PTR_ZONE = "10.in-addr.arpa"
 
 ---
 
-## 0) One-time setup (CLI only)
+## 0) One-time config setup (CLI only)
 
 Write config so you don’t need to pass URL/token/zones every time.
 
