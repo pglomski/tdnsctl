@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-tdnsctl.py - Technitium DNS Server CLI wrapper + importable library.
+Technitium DNS CLI wrapper + importable library.
 
 Idempotent upsert/delete for A, AAAA, CNAME with optional PTR alignment.
 Default behavior: PTR presence aligns with A/AAAA presence.
@@ -21,7 +21,6 @@ Config supports defaults:
 CLI precedence:
 - For zone / ptr-zone: CLI flag > config default > (error if missing where required)
 - For insecure: CLI --insecure (if set) > config insecure > default False
-technitium_dns_cli.py
 
 =====
 tdnsctl — quick-start / everyday use (examples-first)
